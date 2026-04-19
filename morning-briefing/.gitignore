@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+token_cache.json
+refresh_token.txt
+*.log
+.DS_Store

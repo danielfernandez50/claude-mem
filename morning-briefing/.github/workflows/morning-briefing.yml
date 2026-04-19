@@ -1,0 +1,33 @@
+name: Morning Briefing
+
+on:
+  schedule:
+    # 07:00 America/New_York on weekdays.
+    # EST = 12:00 UTC (Nov–Mar), EDT = 11:00 UTC (Mar–Nov).
+    # Running both avoids DST drift; the script is idempotent enough to tolerate one extra run,
+    # but if you prefer a single run, delete one line and adjust when DST changes.
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: python briefing.py
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          TIMEZONE: America/New_York

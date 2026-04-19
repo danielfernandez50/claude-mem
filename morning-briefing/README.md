@@ -1,0 +1,74 @@
+# Morning Briefing Agent
+
+Runs every weekday morning on GitHub Actions. Reads your Outlook email, calendar, and Microsoft To Do list via Microsoft Graph, asks Claude to produce an action-oriented briefing, then emails it to you, creates any new tasks it suggests, and adds any new calendar events.
+
+## One-time setup
+
+### 1. Install dependencies locally
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Get a Microsoft Graph refresh token
+
+Run the device-code flow once:
+
+```bash
+export AZURE_CLIENT_ID=bd79a7c4-f916-4c61-a9f4-9cb0f2cbdaad
+export AZURE_TENANT_ID=3b492fa4-c883-4d83-9beb-41c571e378df
+python auth_setup.py
+```
+
+Follow the URL + code, sign in with your work account, then copy the printed refresh token.
+
+### 3. Create the GitHub repo
+
+```bash
+# From this directory, after `git init` is done:
+gh repo create morning-briefing --private --source=. --remote=origin --push
+```
+
+(or create it manually on github.com and push.)
+
+### 4. Add GitHub Actions secrets
+
+In the repo → Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret              | Value                                                  |
+| ------------------- | ------------------------------------------------------ |
+| `AZURE_CLIENT_ID`   | `bd79a7c4-f916-4c61-a9f4-9cb0f2cbdaad`                 |
+| `AZURE_TENANT_ID`   | `3b492fa4-c883-4d83-9beb-41c571e378df`                 |
+| `MS_REFRESH_TOKEN`  | (from step 2)                                          |
+| `ANTHROPIC_API_KEY` | your Anthropic API key                                 |
+| `TO_EMAIL`          | the email address to send the briefing to              |
+
+### 5. Test it
+
+Trigger manually: repo → Actions → Morning Briefing → Run workflow.
+
+## Local testing
+
+```bash
+cp .env.example .env
+# fill in MS_REFRESH_TOKEN, ANTHROPIC_API_KEY, TO_EMAIL
+set -a && source .env && set +a
+python briefing.py
+```
+
+## Changing the schedule
+
+Edit `.github/workflows/morning-briefing.yml`. Cron times are **UTC**. The default is `0 11 * * 1-5` (7am EDT / 6am EST, weekdays).
+
+## Refresh token expiry
+
+Microsoft refresh tokens typically last ~90 days and auto-extend on each use (which happens daily here). If the workflow ever fails with `invalid_grant`, re-run `auth_setup.py` and update the `MS_REFRESH_TOKEN` secret.
+
+## Files
+
+- `auth_setup.py` — one-time device-code flow to obtain the refresh token.
+- `briefing.py` — the daily job. Fetches Graph data, calls Claude, emails/creates tasks/events.
+- `.github/workflows/morning-briefing.yml` — scheduled GitHub Actions run.
+- `requirements.txt` — Python deps.
