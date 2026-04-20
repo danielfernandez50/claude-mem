@@ -12,7 +12,6 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import requests
@@ -109,24 +108,33 @@ def fetch_today_calendar(token: str, tz: ZoneInfo) -> list[dict]:
     return data.get("value", [])
 
 
-def fetch_default_tasklist_id(token: str) -> str:
-    data = graph_get(token, "/me/todo/lists")
-    for lst in data.get("value", []):
+def fetch_default_tasklist_id(token: str) -> str | None:
+    try:
+        data = graph_get(token, "/me/todo/lists")
+    except requests.HTTPError as e:
+        print(f"WARN: /me/todo/lists failed: {e}. Continuing without tasks.", file=sys.stderr)
+        return None
+    lists = data.get("value", [])
+    for lst in lists:
+        print(f"  list: name={lst.get('displayName')!r} wellknown={lst.get('wellknownListName')} id={lst.get('id')}", file=sys.stderr)
+    for lst in lists:
         if lst.get("wellknownListName") == "defaultList":
             return lst["id"]
-    return data["value"][0]["id"]
+    return lists[0]["id"] if lists else None
 
 
-def fetch_open_tasks(token: str, list_id: str) -> list[dict]:
-    encoded = quote(list_id, safe="")
-    data = graph_get(
-        token,
-        f"/me/todo/lists/{encoded}/tasks",
-        params={
-            "$top": "100",
-            "$select": "title,importance,dueDateTime,status,body,createdDateTime",
-        },
-    )
+def fetch_open_tasks(token: str, list_id: str | None) -> list[dict]:
+    if not list_id:
+        return []
+    try:
+        data = graph_get(
+            token,
+            f"/me/todo/lists/{list_id}/tasks",
+            params={"$top": "100"},
+        )
+    except requests.HTTPError as e:
+        print(f"WARN: tasks fetch failed: {e}. Continuing without tasks.", file=sys.stderr)
+        return []
     return [t for t in data.get("value", []) if t.get("status") != "completed"]
 
 
@@ -258,8 +266,9 @@ def call_claude(user_input: str) -> dict:
     return inner
 
 
-def create_tasks(token: str, list_id: str, new_tasks: list[dict]) -> int:
-    encoded = quote(list_id, safe="")
+def create_tasks(token: str, list_id: str | None, new_tasks: list[dict]) -> int:
+    if not list_id or not new_tasks:
+        return 0
     created = 0
     for t in new_tasks:
         body = {
@@ -269,8 +278,11 @@ def create_tasks(token: str, list_id: str, new_tasks: list[dict]) -> int:
         }
         if t.get("due_date"):
             body["dueDateTime"] = {"dateTime": f"{t['due_date']}T09:00:00", "timeZone": os.environ.get("TIMEZONE", "UTC")}
-        graph_post(token, f"/me/todo/lists/{encoded}/tasks", body)
-        created += 1
+        try:
+            graph_post(token, f"/me/todo/lists/{list_id}/tasks", body)
+            created += 1
+        except requests.HTTPError as e:
+            print(f"WARN: failed to create task {t['title']!r}: {e}", file=sys.stderr)
     return created
 
 
