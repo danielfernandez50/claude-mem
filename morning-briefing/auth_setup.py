@@ -10,6 +10,7 @@ Run locally (NOT in CI):
 Follow the printed URL + device code, sign in with your work account, then
 copy the printed refresh token into the GitHub Actions secret MS_REFRESH_TOKEN.
 """
+import json
 import os
 import sys
 
@@ -31,9 +32,11 @@ def main() -> int:
         print("ERROR: set AZURE_CLIENT_ID and AZURE_TENANT_ID env vars first.", file=sys.stderr)
         return 1
 
+    cache = msal.SerializableTokenCache()
     app = msal.PublicClientApplication(
         client_id,
         authority=f"https://login.microsoftonline.com/{tenant_id}",
+        token_cache=cache,
     )
 
     flow = app.initiate_device_flow(scopes=SCOPES)
@@ -48,16 +51,16 @@ def main() -> int:
         print(f"ERROR: auth failed: {result.get('error_description', result)}", file=sys.stderr)
         return 1
 
-    cache = app.token_cache.serialize()
-    import json
-    parsed = json.loads(cache)
-    refresh_tokens = parsed.get("RefreshToken", {})
-    if not refresh_tokens:
-        print("ERROR: no refresh token returned. Did you grant offline_access?", file=sys.stderr)
-        return 1
+    refresh_token = result.get("refresh_token")
+    if not refresh_token:
+        parsed = json.loads(cache.serialize())
+        refresh_tokens = parsed.get("RefreshToken", {})
+        if refresh_tokens:
+            refresh_token = next(iter(refresh_tokens.values()))["secret"]
 
-    rt_entry = next(iter(refresh_tokens.values()))
-    refresh_token = rt_entry["secret"]
+    if not refresh_token:
+        print("ERROR: no refresh token returned. Ensure offline_access is in scopes.", file=sys.stderr)
+        return 1
 
     print()
     print("=" * 60)
