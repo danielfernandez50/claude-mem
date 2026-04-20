@@ -52,6 +52,9 @@ def graph_get(token: str, path: str, params: dict | None = None) -> dict:
         params=params,
         timeout=30,
     )
+    if not r.ok:
+        print(f"Graph GET failed: {r.status_code} {r.url}", file=sys.stderr)
+        print(f"Response: {r.text[:500]}", file=sys.stderr)
     r.raise_for_status()
     return r.json()
 
@@ -71,7 +74,7 @@ def graph_post(token: str, path: str, body: dict) -> dict:
 
 
 def fetch_recent_emails(token: str) -> list[dict]:
-    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = graph_get(
         token,
         "/me/mailFolders/inbox/messages",
@@ -87,14 +90,16 @@ def fetch_recent_emails(token: str) -> list[dict]:
 
 def fetch_today_calendar(token: str, tz: ZoneInfo) -> list[dict]:
     now_local = datetime.now(tz)
-    start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=1)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_utc = end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = graph_get(
         token,
         "/me/calendarView",
         params={
-            "startDateTime": start.isoformat(),
-            "endDateTime": end.isoformat(),
+            "startDateTime": start_utc,
+            "endDateTime": end_utc,
             "$select": "subject,start,end,location,organizer,bodyPreview,isOnlineMeeting,onlineMeeting",
             "$orderby": "start/dateTime",
             "$top": "50",
@@ -304,12 +309,16 @@ def main() -> int:
     print(f"[{datetime.now(tz).isoformat()}] Getting access token...")
     token = get_access_token()
 
-    print("Fetching inbox, calendar, tasks...")
+    print("Fetching inbox...")
     emails = fetch_recent_emails(token)
+    print(f"  emails={len(emails)}")
+    print("Fetching calendar...")
     events = fetch_today_calendar(token, tz)
+    print(f"  events={len(events)}")
+    print("Fetching tasks...")
     list_id = fetch_default_tasklist_id(token)
     tasks = fetch_open_tasks(token, list_id)
-    print(f"  emails={len(emails)} events={len(events)} tasks={len(tasks)}")
+    print(f"  tasks={len(tasks)}")
 
     user_input = build_claude_input(emails, events, tasks, tz_name)
     print("Calling Claude...")
