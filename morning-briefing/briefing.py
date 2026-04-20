@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import requests
@@ -117,16 +118,16 @@ def fetch_default_tasklist_id(token: str) -> str:
 
 
 def fetch_open_tasks(token: str, list_id: str) -> list[dict]:
+    encoded = quote(list_id, safe="")
     data = graph_get(
         token,
-        f"/me/todo/lists/{list_id}/tasks",
+        f"/me/todo/lists/{encoded}/tasks",
         params={
-            "$filter": "status ne 'completed'",
-            "$top": "50",
+            "$top": "100",
             "$select": "title,importance,dueDateTime,status,body,createdDateTime",
         },
     )
-    return data.get("value", [])
+    return [t for t in data.get("value", []) if t.get("status") != "completed"]
 
 
 def build_claude_input(emails: list[dict], events: list[dict], tasks: list[dict], tz_name: str) -> str:
@@ -258,6 +259,7 @@ def call_claude(user_input: str) -> dict:
 
 
 def create_tasks(token: str, list_id: str, new_tasks: list[dict]) -> int:
+    encoded = quote(list_id, safe="")
     created = 0
     for t in new_tasks:
         body = {
@@ -267,7 +269,7 @@ def create_tasks(token: str, list_id: str, new_tasks: list[dict]) -> int:
         }
         if t.get("due_date"):
             body["dueDateTime"] = {"dateTime": f"{t['due_date']}T09:00:00", "timeZone": os.environ.get("TIMEZONE", "UTC")}
-        graph_post(token, f"/me/todo/lists/{list_id}/tasks", body)
+        graph_post(token, f"/me/todo/lists/{encoded}/tasks", body)
         created += 1
     return created
 
