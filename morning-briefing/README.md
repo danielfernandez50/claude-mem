@@ -1,6 +1,6 @@
 # Morning Briefing Agent
 
-Runs every weekday morning on GitHub Actions. Reads your Outlook email, calendar, and Microsoft To Do list via Microsoft Graph, asks Claude to produce an action-oriented briefing, then emails it to you, creates any new tasks it suggests, and adds any new calendar events.
+Runs every weekday morning on GitHub Actions. Reads your Outlook email, calendar, and Microsoft To Do list via Microsoft Graph, asks Claude (via your **Claude Max subscription** — no API key) to produce an action-oriented briefing, then emails it to you, creates any new tasks it suggests, and adds any new calendar events.
 
 ## One-time setup
 
@@ -24,6 +24,16 @@ python auth_setup.py
 
 Follow the URL + code, sign in with your work account, then copy the printed refresh token.
 
+### 2b. Get a Claude Code OAuth token
+
+Install Claude Code if you don't have it (`npm install -g @anthropic-ai/claude-code`), then run:
+
+```bash
+claude setup-token
+```
+
+Sign in with your Max subscription account when prompted. Copy the printed long-lived OAuth token (~1 year validity).
+
 ### 3. Create the GitHub repo
 
 ```bash
@@ -42,7 +52,7 @@ In the repo → Settings → Secrets and variables → Actions → New repositor
 | `AZURE_CLIENT_ID`   | `bd79a7c4-f916-4c61-a9f4-9cb0f2cbdaad`                 |
 | `AZURE_TENANT_ID`   | `3b492fa4-c883-4d83-9beb-41c571e378df`                 |
 | `MS_REFRESH_TOKEN`  | (from step 2)                                          |
-| `ANTHROPIC_API_KEY` | your Anthropic API key                                 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | (from step 2b)                                   |
 | `TO_EMAIL`          | the email address to send the briefing to              |
 
 ### 5. Test it
@@ -62,9 +72,10 @@ python briefing.py
 
 Edit `.github/workflows/morning-briefing.yml`. Cron times are **UTC**. The default is `0 11 * * 1-5` (7am EDT / 6am EST, weekdays).
 
-## Refresh token expiry
+## Token expiry
 
-Microsoft refresh tokens typically last ~90 days and auto-extend on each use (which happens daily here). If the workflow ever fails with `invalid_grant`, re-run `auth_setup.py` and update the `MS_REFRESH_TOKEN` secret.
+- **Microsoft refresh token**: ~90 days, auto-extends on each use (which happens daily here). If the workflow fails with `invalid_grant`, re-run `auth_setup.py` and update the `MS_REFRESH_TOKEN` secret.
+- **Claude Code OAuth token**: ~1 year. Set a calendar reminder — when it expires, re-run `claude setup-token` and update the `CLAUDE_CODE_OAUTH_TOKEN` secret.
 
 ## Files
 

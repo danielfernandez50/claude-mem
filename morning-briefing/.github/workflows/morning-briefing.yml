@@ -3,9 +3,7 @@ name: Morning Briefing
 on:
   schedule:
     # 07:00 America/New_York on weekdays.
-    # EST = 12:00 UTC (Nov–Mar), EDT = 11:00 UTC (Mar–Nov).
-    # Running both avoids DST drift; the script is idempotent enough to tolerate one extra run,
-    # but if you prefer a single run, delete one line and adjust when DST changes.
+    # Cron is UTC. 11:00 UTC = 07:00 EDT (Mar–Nov) / 06:00 EST (Nov–Mar).
     - cron: "0 11 * * 1-5"
   workflow_dispatch: {}
 
@@ -21,13 +19,18 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - run: pip install -r requirements.txt
+      - run: npm install -g @anthropic-ai/claude-code
 
       - run: python briefing.py
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           TIMEZONE: America/New_York

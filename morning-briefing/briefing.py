@@ -9,11 +9,11 @@ asks Claude to produce an action-oriented briefing, then:
 """
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import anthropic
 import requests
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -166,79 +166,90 @@ def build_claude_input(emails: list[dict], events: list[dict], tasks: list[dict]
     )
 
 
-BRIEFING_TOOL = {
-    "name": "submit_briefing",
-    "description": "Submit the morning briefing: email body, new tasks to create, new calendar events to create.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "email_subject": {"type": "string"},
-            "email_html": {
-                "type": "string",
-                "description": "Full HTML body of the briefing email. Include: top priorities, emails needing reply (grouped by urgency/tone), meeting prep notes for today, conflicts or gaps to watch, and suggested focus blocks. Use <h2>, <ul>, <li>, <strong> — keep it scannable.",
-            },
-            "new_tasks": {
-                "type": "array",
-                "description": "New tasks to add to Microsoft To Do. Only add tasks that are clearly needed and NOT already in the open tasks list.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "notes": {"type": "string"},
-                        "due_date": {
-                            "type": "string",
-                            "description": "ISO 8601 date (YYYY-MM-DD) or empty string for no due date.",
-                        },
-                        "importance": {"type": "string", "enum": ["low", "normal", "high"]},
+BRIEFING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "email_subject": {"type": "string"},
+        "email_html": {
+            "type": "string",
+            "description": (
+                "Full HTML body of the briefing email. Include: top priorities, "
+                "emails needing reply (grouped by urgency/tone), meeting prep notes, "
+                "conflicts or gaps, and suggested focus blocks. Use <h2>, <ul>, <li>, "
+                "<strong> — keep it scannable."
+            ),
+        },
+        "new_tasks": {
+            "type": "array",
+            "description": "Tasks to add to Microsoft To Do. Only propose ones NOT already in the open-tasks list.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "notes": {"type": "string"},
+                    "due_date": {
+                        "type": "string",
+                        "description": "ISO 8601 date (YYYY-MM-DD) or empty string.",
                     },
-                    "required": ["title", "notes", "due_date", "importance"],
+                    "importance": {"type": "string", "enum": ["low", "normal", "high"]},
                 },
-            },
-            "new_events": {
-                "type": "array",
-                "description": "New calendar events to create. Use sparingly — only for focus blocks, prep time, or follow-ups clearly implied by the emails/tasks.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "start": {"type": "string", "description": "ISO 8601 local datetime, e.g. 2026-04-19T14:00:00"},
-                        "end": {"type": "string", "description": "ISO 8601 local datetime"},
-                        "notes": {"type": "string"},
-                    },
-                    "required": ["title", "start", "end", "notes"],
-                },
+                "required": ["title", "notes", "due_date", "importance"],
             },
         },
-        "required": ["email_subject", "email_html", "new_tasks", "new_events"],
+        "new_events": {
+            "type": "array",
+            "description": "Calendar events to create — use sparingly, only for focus blocks or prep time tied to today's meetings.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "start": {"type": "string", "description": "ISO 8601 local datetime"},
+                    "end": {"type": "string", "description": "ISO 8601 local datetime"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["title", "start", "end", "notes"],
+            },
+        },
     },
+    "required": ["email_subject", "email_html", "new_tasks", "new_events"],
 }
 
 
-def call_claude(user_input: str) -> dict:
-    client = anthropic.Anthropic()
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        system=(
-            "You are a proactive executive assistant preparing a morning briefing.\n"
-            "- Read the user's inbox, calendar, and task list.\n"
-            "- Infer urgency from email tone, sender seniority, explicit deadlines, and how long emails have sat.\n"
-            "- Produce ONE clear action list ordered by priority. Be specific (not 'review emails').\n"
-            "- Flag meetings needing prep and what to prep.\n"
-            "- Note conflicts, double-bookings, back-to-backs with no buffer.\n"
-            "- Only propose new tasks that are NOT already in the open tasks list.\n"
-            "- Only propose new events for concrete focus blocks or prep time tied to today's meetings.\n"
-            "- Always call submit_briefing exactly once."
-        ),
-        tools=[BRIEFING_TOOL],
-        tool_choice={"type": "tool", "name": "submit_briefing"},
-        messages=[{"role": "user", "content": user_input}],
-    )
+SYSTEM_PROMPT = (
+    "You are a proactive executive assistant preparing a morning briefing.\n"
+    "- Read the user's inbox, calendar, and task list.\n"
+    "- Infer urgency from email tone, sender seniority, explicit deadlines, and how long emails have sat.\n"
+    "- Produce ONE clear action list ordered by priority. Be specific (not 'review emails').\n"
+    "- Flag meetings needing prep and what to prep.\n"
+    "- Note conflicts, double-bookings, back-to-backs with no buffer.\n"
+    "- Only propose new tasks that are NOT already in the open tasks list.\n"
+    "- Only propose new events for concrete focus blocks or prep time tied to today's meetings.\n"
+    "- Respond with JSON matching the provided schema."
+)
 
-    for block in resp.content:
-        if block.type == "tool_use" and block.name == "submit_briefing":
-            return block.input
-    raise RuntimeError("Claude did not call submit_briefing")
+
+def call_claude(user_input: str) -> dict:
+    prompt = f"{SYSTEM_PROMPT}\n\n---\n\n{user_input}"
+    result = subprocess.run(
+        [
+            "claude",
+            "-p",
+            prompt,
+            "--output-format", "json",
+            "--json-schema", json.dumps(BRIEFING_SCHEMA),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"claude CLI failed (exit {result.returncode}): {result.stderr}")
+
+    raw = json.loads(result.stdout)
+    inner = raw.get("result", raw) if isinstance(raw, dict) else raw
+    if isinstance(inner, str):
+        inner = json.loads(inner)
+    return inner
 
 
 def create_tasks(token: str, list_id: str, new_tasks: list[dict]) -> int:
