@@ -238,11 +238,56 @@ SYSTEM_PROMPT = (
     "- Note conflicts, double-bookings, back-to-backs with no buffer.\n"
     "- Only propose new tasks that are NOT already in the open tasks list.\n"
     "- Only propose new events for concrete focus blocks or prep time tied to today's meetings.\n"
-    "- Respond with JSON matching the provided schema."
+    "- Respond with JSON matching the provided schema.\n"
+    "\n"
+    "CRITICAL JSON ESCAPING RULES:\n"
+    "- In email_html, NEVER use literal double-quote (\") characters. Use &quot; instead.\n"
+    "- Example: write <strong>&quot;Subject Line&quot;</strong>, NOT <strong>\"Subject Line\"</strong>.\n"
+    "- Newlines inside strings must be \\n.\n"
+    "- The entire response MUST be parseable by json.loads() in Python."
 )
 
 
-def call_claude(user_input: str) -> dict:
+def _parse_claude_result(stdout: str) -> dict:
+    raw = json.loads(stdout)
+    inner = raw.get("result", raw) if isinstance(raw, dict) else raw
+    if isinstance(inner, dict):
+        return inner
+    text = str(inner).strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1:
+        text = text[start:end + 1]
+    return json.loads(text)
+
+
+def _raw_claude_text(stdout: str) -> str:
+    try:
+        raw = json.loads(stdout)
+        if isinstance(raw, dict):
+            return str(raw.get("result", raw))
+        return str(raw)
+    except Exception:
+        return stdout
+
+
+def _invoke_claude(prompt: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["claude", "-p", prompt, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+
+def call_claude(user_input: str) -> dict | str:
     schema_json = json.dumps(BRIEFING_SCHEMA, indent=2)
     prompt = (
         f"{SYSTEM_PROMPT}\n\n"
@@ -252,51 +297,32 @@ def call_claude(user_input: str) -> dict:
         "---\n\n"
         f"{user_input}"
     )
-    result = subprocess.run(
-        [
-            "claude",
-            "-p",
-            prompt,
-            "--output-format", "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+
+    result = _invoke_claude(prompt)
     if result.returncode != 0:
-        raise RuntimeError(
-            f"claude CLI failed (exit {result.returncode}). "
-            f"stderr: {result.stderr[:1000]}"
-        )
+        raise RuntimeError(f"claude CLI failed (exit {result.returncode}): {result.stderr[:1000]}")
 
     try:
-        raw = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print(f"ERROR: claude output is not JSON: {result.stdout[:1000]!r}", file=sys.stderr)
-        raise
+        return _parse_claude_result(result.stdout)
+    except json.JSONDecodeError as e:
+        print(f"WARN: first parse failed ({e}). Retrying with error feedback.", file=sys.stderr)
 
-    inner = raw.get("result", raw) if isinstance(raw, dict) else raw
-    if isinstance(inner, dict):
-        return inner
+    retry_prompt = (
+        f"{prompt}\n\n"
+        "---\n\n"
+        "YOUR PREVIOUS ATTEMPT PRODUCED INVALID JSON. Common issue: unescaped "
+        "double quotes in email_html. Use &quot; for every double quote inside "
+        "HTML content. Return ONLY the corrected JSON object, no prose."
+    )
+    result2 = _invoke_claude(retry_prompt)
+    if result2.returncode == 0:
+        try:
+            return _parse_claude_result(result2.stdout)
+        except json.JSONDecodeError as e:
+            print(f"WARN: retry also failed ({e}). Falling back to plain text.", file=sys.stderr)
 
-    text = str(inner).strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1:
-        text = text[start:end + 1]
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        print(f"ERROR: Claude did not return valid JSON. Raw 'result':\n{str(inner)[:2000]}", file=sys.stderr)
-        raise
+    print("WARN: returning raw Claude text as plain-text email fallback.", file=sys.stderr)
+    return _raw_claude_text(result.stdout)
 
 
 def create_tasks(token: str, list_id: str | None, new_tasks: list[dict]) -> int:
@@ -371,13 +397,28 @@ def main() -> int:
     print("Calling Claude...")
     result = call_claude(user_input)
 
+    generated_at = datetime.now(tz).strftime('%Y-%m-%d %H:%M %Z')
+
+    if isinstance(result, str):
+        print("Sending plain-text fallback email (JSON parse failed)...")
+        subject = f"Morning Briefing (plain text) · {datetime.now(tz).strftime('%a %b %d')}"
+        pre_escaped = result.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        html = (
+            f"<p><em>Note: Claude output could not be parsed as JSON — showing raw text.</em></p>"
+            f"<pre style='white-space:pre-wrap;font-family:ui-sans-serif,sans-serif'>{pre_escaped}</pre>"
+            f"<hr><p style='color:#888;font-size:12px'>Generated {generated_at}</p>"
+        )
+        send_email(token, to_email, subject, html)
+        print("Done (fallback).")
+        return 0
+
     new_tasks = result.get("new_tasks", [])
     new_events = result.get("new_events", [])
     print(f"Claude proposed: {len(new_tasks)} tasks, {len(new_events)} events.")
 
     footer_html = (
         f"<hr><p style='color:#888;font-size:12px'>"
-        f"Generated {datetime.now(tz).strftime('%Y-%m-%d %H:%M %Z')} · "
+        f"Generated {generated_at} · "
         f"{len(emails)} emails · {len(events)} meetings · {len(tasks)} open tasks · "
         f"{len(new_tasks)} tasks added · {len(new_events)} events added"
         f"</p>"
