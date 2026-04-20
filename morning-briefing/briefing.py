@@ -243,27 +243,60 @@ SYSTEM_PROMPT = (
 
 
 def call_claude(user_input: str) -> dict:
-    prompt = f"{SYSTEM_PROMPT}\n\n---\n\n{user_input}"
+    schema_json = json.dumps(BRIEFING_SCHEMA, indent=2)
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        "Respond with a SINGLE JSON object matching this schema exactly. "
+        "No prose, no code fences, no explanations — just the JSON object.\n\n"
+        f"SCHEMA:\n{schema_json}\n\n"
+        "---\n\n"
+        f"{user_input}"
+    )
     result = subprocess.run(
         [
             "claude",
             "-p",
             prompt,
             "--output-format", "json",
-            "--json-schema", json.dumps(BRIEFING_SCHEMA),
         ],
         capture_output=True,
         text=True,
         timeout=600,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"claude CLI failed (exit {result.returncode}): {result.stderr}")
+        raise RuntimeError(
+            f"claude CLI failed (exit {result.returncode}). "
+            f"stderr: {result.stderr[:1000]}"
+        )
 
-    raw = json.loads(result.stdout)
+    try:
+        raw = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"ERROR: claude output is not JSON: {result.stdout[:1000]!r}", file=sys.stderr)
+        raise
+
     inner = raw.get("result", raw) if isinstance(raw, dict) else raw
-    if isinstance(inner, str):
-        inner = json.loads(inner)
-    return inner
+    if isinstance(inner, dict):
+        return inner
+
+    text = str(inner).strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1:
+        text = text[start:end + 1]
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        print(f"ERROR: Claude did not return valid JSON. Raw 'result':\n{str(inner)[:2000]}", file=sys.stderr)
+        raise
 
 
 def create_tasks(token: str, list_id: str | None, new_tasks: list[dict]) -> int:
