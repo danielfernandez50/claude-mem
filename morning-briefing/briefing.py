@@ -361,8 +361,11 @@ def create_events(token: str, new_events: list[dict], tz_name: str) -> int:
             "end": {"dateTime": ev["end"], "timeZone": tz_name},
             "body": {"contentType": "text", "content": ev.get("notes", "")},
         }
-        graph_post(token, "/me/events", body)
-        created += 1
+        try:
+            graph_post(token, "/me/events", body)
+            created += 1
+        except requests.HTTPError as e:
+            print(f"WARN: failed to create event {ev['title']!r}: {e}", file=sys.stderr)
     return created
 
 
@@ -424,23 +427,20 @@ def main() -> int:
     new_events = result.get("new_events", [])
     print(f"Claude proposed: {len(new_tasks)} tasks, {len(new_events)} events.")
 
+    tasks_created = create_tasks(token, list_id, new_tasks) if new_tasks else 0
+    events_created = create_events(token, new_events, tz_name) if new_events else 0
+    print(f"Created: {tasks_created} tasks, {events_created} events.")
+
     footer_html = (
         f"<hr><p style='color:#888;font-size:12px'>"
         f"Generated {generated_at} · "
         f"{len(emails)} emails · {len(events)} meetings · {len(tasks)} open tasks · "
-        f"{len(new_tasks)} tasks added · {len(new_events)} events added"
+        f"{tasks_created}/{len(new_tasks)} tasks added · {events_created}/{len(new_events)} events added"
         f"</p>"
     )
 
     print("Sending briefing email...")
     send_email(token, to_email, result["email_subject"], result["email_html"] + footer_html)
-
-    if new_tasks:
-        print("Creating tasks...")
-        create_tasks(token, list_id, new_tasks)
-    if new_events:
-        print("Creating events...")
-        create_events(token, new_events, tz_name)
 
     print("Done.")
     return 0
