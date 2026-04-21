@@ -88,9 +88,9 @@ def fetch_recent_emails(token: str) -> list[dict]:
     return data.get("value", [])
 
 
-def fetch_today_calendar(token: str, tz: ZoneInfo) -> list[dict]:
+def fetch_tomorrow_calendar(token: str, tz: ZoneInfo) -> list[dict]:
     now_local = datetime.now(tz)
-    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     end_local = start_local + timedelta(days=1)
     start_utc = start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     end_utc = end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -173,7 +173,7 @@ def build_claude_input(emails: list[dict], events: list[dict], tasks: list[dict]
         f"CURRENT_TIME: {datetime.now(ZoneInfo(tz_name)).isoformat()}\n\n"
         f"RECENT EMAILS (last 24h, {len(emails)}):\n"
         + ("\n".join(email_row(e) for e in emails) if emails else "(none)")
-        + f"\n\nTODAY'S CALENDAR ({len(events)} events):\n"
+        + f"\n\nTOMORROW'S CALENDAR ({len(events)} events):\n"
         + ("\n".join(event_row(ev) for ev in events) if events else "(none)")
         + f"\n\nOPEN TASKS ({len(tasks)}):\n"
         + ("\n".join(task_row(t) for t in tasks) if tasks else "(none)")
@@ -187,10 +187,10 @@ BRIEFING_SCHEMA = {
         "email_html": {
             "type": "string",
             "description": (
-                "Full HTML body of the briefing email. Include: top priorities, "
-                "emails needing reply (grouped by urgency/tone), meeting prep notes, "
-                "conflicts or gaps, and suggested focus blocks. Use <h2>, <ul>, <li>, "
-                "<strong> — keep it scannable."
+                "Full HTML body of the end-of-day briefing. Include: top priorities for tomorrow, "
+                "emails to reply to (tonight vs. tomorrow), prep notes for tomorrow's meetings, "
+                "conflicts/gaps in tomorrow's schedule, and suggested focus blocks. Use <h2>, "
+                "<ul>, <li>, <strong> — keep it scannable."
             ),
         },
         "new_tasks": {
@@ -212,7 +212,7 @@ BRIEFING_SCHEMA = {
         },
         "new_events": {
             "type": "array",
-            "description": "Calendar events to create — use sparingly, only for focus blocks or prep time tied to today's meetings.",
+            "description": "Calendar events to create for TOMORROW — use sparingly, only for focus blocks or prep time tied to tomorrow's meetings.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -230,14 +230,16 @@ BRIEFING_SCHEMA = {
 
 
 SYSTEM_PROMPT = (
-    "You are a proactive executive assistant preparing a morning briefing.\n"
-    "- Read the user's inbox, calendar, and task list.\n"
-    "- Infer urgency from email tone, sender seniority, explicit deadlines, and how long emails have sat.\n"
-    "- Produce ONE clear action list ordered by priority. Be specific (not 'review emails').\n"
-    "- Flag meetings needing prep and what to prep.\n"
-    "- Note conflicts, double-bookings, back-to-backs with no buffer.\n"
+    "You are a proactive executive assistant preparing an end-of-day briefing for TOMORROW.\n"
+    "The user is sending this at ~6pm. They want to close the day knowing exactly what to tackle tomorrow morning.\n"
+    "- Read the user's inbox (last 24h), TOMORROW's calendar, and open tasks.\n"
+    "- Infer urgency from email tone, sender seniority, explicit deadlines, and how long emails have sat unanswered.\n"
+    "- Produce ONE clear prioritized action list for tomorrow. Be specific (not 'review emails').\n"
+    "- Flag emails the user should reply to before EOD today vs. ones that can wait until tomorrow.\n"
+    "- For tomorrow's meetings: call out what needs prep and what specifically to prepare.\n"
+    "- Note conflicts, double-bookings, back-to-backs with no buffer in tomorrow's schedule.\n"
     "- Only propose new tasks that are NOT already in the open tasks list.\n"
-    "- Only propose new events for concrete focus blocks or prep time tied to today's meetings.\n"
+    "- Only propose new events for concrete focus blocks or prep time on TOMORROW's calendar.\n"
     "- Respond with JSON matching the provided schema.\n"
     "\n"
     "CRITICAL JSON ESCAPING RULES:\n"
@@ -385,8 +387,8 @@ def main() -> int:
     print("Fetching inbox...")
     emails = fetch_recent_emails(token)
     print(f"  emails={len(emails)}")
-    print("Fetching calendar...")
-    events = fetch_today_calendar(token, tz)
+    print("Fetching tomorrow's calendar...")
+    events = fetch_tomorrow_calendar(token, tz)
     print(f"  events={len(events)}")
     print("Fetching tasks...")
     list_id = fetch_default_tasklist_id(token)
@@ -401,7 +403,8 @@ def main() -> int:
 
     if isinstance(result, str):
         print("Sending plain-text fallback email (JSON parse failed)...")
-        subject = f"Morning Briefing (plain text) · {datetime.now(tz).strftime('%a %b %d')}"
+        tomorrow_label = (datetime.now(tz) + timedelta(days=1)).strftime('%a %b %d')
+        subject = f"Tomorrow's Prep (plain text) · {tomorrow_label}"
         pre_escaped = result.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         html = (
             f"<p><em>Note: Claude output could not be parsed as JSON — showing raw text.</em></p>"

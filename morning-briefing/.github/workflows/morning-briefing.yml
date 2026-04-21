@@ -1,10 +1,10 @@
-name: Morning Briefing
+name: Tomorrow's Prep
 
 on:
   schedule:
-    # 07:00 America/New_York on weekdays.
-    # Cron is UTC. 11:00 UTC = 07:00 EDT (Mar–Nov) / 06:00 EST (Nov–Mar).
-    - cron: "0 11 * * 1-5"
+    # 18:00 America/New_York on weekdays.
+    # Cron is UTC. 22:00 UTC = 18:00 EDT (Mar–Nov) / 17:00 EST (Nov–Mar).
+    - cron: "0 22 * * 1-5"
   workflow_dispatch: {}
 
 jobs:

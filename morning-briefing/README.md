@@ -1,4 +1,4 @@
-# Morning Briefing Agent
+# Tomorrow's Prep Agent
 
 Runs every weekday morning on GitHub Actions. Reads your Outlook email, calendar, and Microsoft To Do list via Microsoft Graph, asks Claude (via your **Claude Max subscription** — no API key) to produce an action-oriented briefing, then emails it to you, creates any new tasks it suggests, and adds any new calendar events.
 
@@ -57,7 +57,7 @@ In the repo → Settings → Secrets and variables → Actions → New repositor
 
 ### 5. Test it
 
-Trigger manually: repo → Actions → Morning Briefing → Run workflow.
+Trigger manually: repo → Actions → Tomorrow's Prep → Run workflow.
 
 ## Local testing
 
