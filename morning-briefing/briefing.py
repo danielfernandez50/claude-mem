@@ -45,10 +45,13 @@ def get_access_token() -> str:
     return resp.json()["access_token"]
 
 
-def graph_get(token: str, path: str, params: dict | None = None) -> dict:
+def graph_get(token: str, path: str, params: dict | None = None, headers: dict | None = None) -> dict:
+    req_headers = {"Authorization": f"Bearer {token}"}
+    if headers:
+        req_headers.update(headers)
     r = requests.get(
         f"{GRAPH}{path}",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=req_headers,
         params=params,
         timeout=30,
     )
@@ -89,6 +92,7 @@ def fetch_recent_emails(token: str) -> list[dict]:
 
 
 def fetch_tomorrow_calendar(token: str, tz: ZoneInfo) -> list[dict]:
+    tz_name = os.environ.get("TIMEZONE", "America/New_York")
     now_local = datetime.now(tz)
     start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     end_local = start_local + timedelta(days=1)
@@ -104,6 +108,7 @@ def fetch_tomorrow_calendar(token: str, tz: ZoneInfo) -> list[dict]:
             "$orderby": "start/dateTime",
             "$top": "50",
         },
+        headers={"Prefer": f'outlook.timezone="{tz_name}"'},
     )
     return data.get("value", [])
 
